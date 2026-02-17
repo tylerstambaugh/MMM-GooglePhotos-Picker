@@ -5,9 +5,10 @@
 Module.register("MMM-GooglePhotos", {
   defaults: {
     albums: [],
-    updateInterval: 1000 * 30, // minimum 10 seconds.
-    sort: "new", // "old", "random"
-    uploadAlbum: null, // Only for created by `create_uploadable_album.js`
+    updateInterval: 60000, // 60 seconds
+    sort: "random", // random, time
+    maxWidth: 1920,
+    maxHeight: 1080,
     condition: {
       fromDate: null, // Or "2018-03", RFC ... format available
       toDate: null, // Or "2019-12-25",
@@ -33,6 +34,7 @@ Module.register("MMM-GooglePhotos", {
   },
 
   start: function () {
+    this.currentPhoto = null;
     this.uploadableAlbum = null;
     this.albums = null;
     this.scanned = [];
@@ -55,14 +57,14 @@ Module.register("MMM-GooglePhotos", {
     }
 
     this.sendSocketNotification("INIT", config);
-    this.dynamicPosition = 0;
+    this.scheduleUpdate();
   },
 
-  socketNotificationReceived: function (noti, payload) {
-    if (noti === "UPLOADABLE_ALBUM") {
+  socketNotificationReceived: function (notification, payload) {
+    if (notification === "UPLOADABLE_ALBUM") {
       this.uploadableAlbum = payload;
     }
-    if (noti === "INITIALIZED") {
+    if (notification === "INITIALIZED") {
       this.albums = payload;
       //set up timer once initialized, more robust against faults
       if (!this.updateTimer || this.updateTimer === null) {
@@ -72,10 +74,10 @@ Module.register("MMM-GooglePhotos", {
         }, this.config.updateInterval);
       }
     }
-    if (noti === "UPDATE_ALBUMS") {
+    if (notification === "UPDATE_ALBUMS") {
       this.albums = payload;
     }
-    if (noti === "MORE_PICS") {
+    if (notification === "MORE_PICS") {
       if (payload && Array.isArray(payload) && payload.length > 0) this.needMorePicsFlag = false;
       this.scanned = payload;
       this.index = 0;
@@ -83,7 +85,7 @@ Module.register("MMM-GooglePhotos", {
         this.updatePhotos(); //little faster starting
       }
     }
-    if (noti === "ERROR") {
+    if (notification === "ERROR") {
       const current = document.getElementById("GPHOTO_CURRENT");
       const errMsgDiv = document.createElement("div");
       errMsgDiv.style.textAlign = "center";
@@ -93,13 +95,28 @@ Module.register("MMM-GooglePhotos", {
       errMsgDiv.textContent = payload;
       current.appendChild(errMsgDiv);
     }
-    if (noti === "CLEAR_ERROR") {
+    if (notification === "CLEAR_ERROR") {
       const current = document.getElementById("GPHOTO_CURRENT");
       current.textContent = "";
     }
-    if (noti === "UPDATE_STATUS") {
+    if (notification === "UPDATE_STATUS") {
       let info = document.getElementById("GPHOTO_INFO");
       info.innerHTML = String(payload);
+    }
+    if (notification === 'PHOTO') {
+      this.currentPhoto = payload;
+      this.updateDom(1000);
+    } else if (notification === 'AUTH_REQUIRED') {
+      console.error('Authentication required. Please run: node auth_setup.js');
+      this.currentPhoto = {error: 'Authentication required'};
+      this.updateDom();
+    } else if (notification === 'ERROR') {
+      console.error('Error:', payload);
+      this.currentPhoto = {error: payload};
+      this.updateDom();
+    } else if (notification === 'NO_PHOTOS') {
+      this.currentPhoto = {error: 'No photos found'};
+      this.updateDom();
     }
   },
 
@@ -215,27 +232,32 @@ Module.register("MMM-GooglePhotos", {
   },
 
   getDom: function () {
-    let wrapper = document.createElement("div");
-    wrapper.id = "GPHOTO";
-    let back = document.createElement("div");
-    back.id = "GPHOTO_BACK";
-    let current = document.createElement("div");
-    current.id = "GPHOTO_CURRENT";
-    if (this.data.position.search("fullscreen") === -1) {
-      if (this.config.showWidth) wrapper.style.width = this.config.showWidth + "px";
-      if (this.config.showHeight) wrapper.style.height = this.config.showHeight + "px";
+    const wrapper = document.createElement("div");
+    wrapper.className = "MMM-GooglePhotos";
+
+    if (!this.currentPhoto) {
+      wrapper.innerHTML = "Loading photos...";
+      return wrapper;
     }
-    current.addEventListener("animationend", () => {
-      current.classList.remove("animated");
-    });
-    let info = document.createElement("div");
-    info.id = "GPHOTO_INFO";
-    info.innerHTML = "Loading...";
-    wrapper.appendChild(back);
-    wrapper.appendChild(current);
-    wrapper.appendChild(info);
-    Log.info("updated!");
+
+    if (this.currentPhoto.error) {
+      wrapper.innerHTML = `Error: ${this.currentPhoto.error}`;
+      return wrapper;
+    }
+
+    const img = document.createElement("img");
+    img.src = this.currentPhoto.url;
+    img.style.maxWidth = this.config.maxWidth + "px";
+    img.style.maxHeight = this.config.maxHeight + "px";
+    wrapper.appendChild(img);
+
     return wrapper;
+  },
+
+  scheduleUpdate: function () {
+    setInterval(() => {
+      this.sendSocketNotification("NEXT_PHOTO");
+    }, this.config.updateInterval);
   },
 
   suspend() {

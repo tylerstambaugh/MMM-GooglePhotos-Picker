@@ -1,60 +1,137 @@
 # MMM-GooglePhotos
 
-Display your photos from album of Google Photos on [MagicMirror²](https://github.com/MagicMirrorOrg/MagicMirror).
+A MagicMirror² module to display photos from Google Photos using the official Google Photos Library API.
 
+## Features
 
-> [!IMPORTANT]  
-> This plugin is not working currently because [new changes in Google Photos API](https://developers.google.com/photos/support/updates) take effect March 2025
->
-> Reference: <br />
-> https://github.com/hermanho/MMM-GooglePhotos/issues/194 <br />
-> https://github.com/hermanho/MMM-GooglePhotos/issues/208
+- Display photos from specific albums or all photos
+- Random or chronological sorting
+- Automatic photo rotation
+- OAuth 2.0 authentication
 
+## Installation
 
-## Screenshot
+1. Navigate to your MagicMirror's modules folder:
+```bash
+cd ~/MagicMirror/modules
+```
 
-![screenshot](images/screenshot.png)
+2. Clone this repository:
+```bash
+git clone https://github.com/yourusername/MMM-GooglePhotos.git
+cd MMM-GooglePhotos
+```
 
-![screenshot](images/screenshot2.png)
+3. Install dependencies:
+```bash
+npm install
+```
 
-## Installation & Upgrade
+## Getting Google Photos API Credentials
 
-[INSTALL.md](INSTALL.md)
+### Step 1: Create a Google Cloud Project
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Create a new project or select an existing one
+3. Name it something like "MagicMirror Photos"
+
+### Step 2: Enable Google Photos Library API
+
+1. In your project, go to **APIs & Services** > **Library**
+2. Search for "Photos Library API"
+3. Click on it and press **Enable**
+
+### Step 3: Create OAuth 2.0 Credentials
+
+1. Go to **APIs & Services** > **Credentials**
+2. Click **Create Credentials** > **OAuth client ID**
+3. If prompted, configure the OAuth consent screen:
+   - Choose **External** user type
+   - Fill in the required fields (app name, user support email, developer email)
+   - Add your email as a test user
+   - Save and continue through the scopes and summary
+4. Back in Credentials, click **Create Credentials** > **OAuth client ID**
+5. Choose **Desktop app** as the application type
+6. Name it "MMM-GooglePhotos"
+7. Click **Create**
+
+### Step 4: Download Credentials
+
+1. Click the download icon (⬇) next to your newly created OAuth 2.0 Client ID
+2. Rename the downloaded file to `credentials.json`
+3. Move it to the `MMM-GooglePhotos` module directory:
+```bash
+mv ~/Downloads/client_secret_*.json ~/MagicMirror/modules/MMM-GooglePhotos/credentials.json
+```
+
+## Authentication Setup
+
+1. Navigate to the module directory:
+```bash
+cd ~/MagicMirror/modules/MMM-GooglePhotos
+```
+
+2. Run the authentication setup:
+```bash
+node auth_setup.js
+```
+
+3. The script will display a URL. Open it in your browser
+4. Sign in with your Google account
+5. Grant the requested permissions
+6. Copy the authorization code from the browser
+7. Paste it into the terminal when prompted
+8. You should see "✓ Token stored successfully!"
+
+**Important:** The `token.json` file will be created and contains your access token. Keep this file secure and do not share it.
 
 ## Configuration
+
+Add the module to your `config/config.js` file:
 
 ```javascript
 {
   module: "MMM-GooglePhotos",
-  position: "top_right",
+  position: "middle_center",
   config: {
-    albums: [], // Set your album name. like ["My wedding", "family share", "Travle to Paris"]
-    updateInterval: 1000 * 60, // minimum 10 seconds.
-    sort: "new", // "old", "random"
-    uploadAlbum: null, // Only album created by `create_uploadable_album.js`.
-    condition: {
-      fromDate: null, // Or "2018-03", RFC ... format available
-      toDate: null, // Or "2019-12-25",
-      minWidth: null, // Or 400
-      maxWidth: null, // Or 8000
-      minHeight: null, // Or 400
-      maxHeight: null, // Or 8000
-      minWHRatio: null,
-      maxWHRatio: null,
-      // WHRatio = Width/Height ratio ( ==1 : Squared Photo,   < 1 : Portraited Photo, > 1 : Landscaped Photo)
-    },
-    showWidth: 1080, // These values will be used for quality of downloaded photos to show. real size to show in your MagicMirror region is recommended.
-    showHeight: 1920,
-    timeFormat: "YYYY/MM/DD HH:mm", // Or `relative` can be used.
+    albums: ["Vacation 2024", "Family Photos"], // Leave empty [] for all photos
+    updateInterval: 60000, // 60 seconds (in milliseconds)
+    sort: "random", // "random" or "time"
+    maxWidth: 1920,
+    maxHeight: 1080
   }
 },
+```
+
+### Configuration Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `albums` | Array of album names to display. Leave empty for all photos. | `[]` |
+| `updateInterval` | Time between photo changes (milliseconds) | `60000` |
+| `sort` | Sort order: "random" or "time" | `"random"` |
+| `maxWidth` | Maximum photo width in pixels | `1920` |
+| `maxHeight` | Maximum photo height in pixels | `1080` |
+
+## File Structure
+
+After setup, your module directory should contain:
+
+```
+MMM-GooglePhotos/
+├── MMM-GooglePhotos.js
+├── auth_setup.js
+├── credentials.json
+├── node_modules/
+├── package.json
+└── README.md
 ```
 
 ## Usage
 
 ### `albums`
 
-Now this module can access not only your owns but also shared. You can specify album title like this.
+Specify album titles to display photos from specific albums. Leave empty to display photos from all albums.
 
 ```js
 albums: ["My wedding", "family share", "Travle to Paris", "from Tom"],
@@ -71,69 +148,9 @@ albums: ["My wedding", "family share", "Travle to Paris", "from Tom"],
 
 - `new`, `old`, `random` are supported.
 
-#### **`uploadAlbum`**
+### `maxWidth`, `maxHeight`
 
-- If you set this, you can upload pictures from MagicMirror to Google Photos through `GPHOTO_UPLOAD` notification.
-
-```js
-this.sendNotification("GPHOTO_UPLOAD", path);
-```
-
-- This album **SHOULD** be created by `create_uploadable_album.js`.
-
-```sh
-node create_uploadable_album.js MyMagicMirrorAlbum
-```
-
-- At this moment, `MMM-Selfieshot` and `MMM-TelegramBot` can upload their pictures through this feature.
-
-### `condition`
-
-- You can filter photos by this object.
-- `fromDate` : If set, The photos which was created after this value will be loaded. (e.g: `fromDate:"2015-12-25"` or `fromDate:"6 Mar 17 21:22 UT"`)
-- `toDate` : If set, The photos which was created before this value will be loaded. (e.g: `toDate:"Mon 06 Mar 2017 21:22:23 z"` or `toDate:"20130208"`)
-- ISO 8601 and RFC 2822 is supported for `fromDate` and `toDate`.
-- `minWidth`, `maxWidth`, `minHeight`, `maxHeight` : If set, the photos have these value as original dimensiont will be loaded. You can use these values to avoid too big or too small pictures(like icons)
-- `minWHRatio`, `maxWHRatio` : With these values, you can get only portrait photos(or landscaped, or squared)
-- **WHRatio** is `width / height`. So `=1` will be squared dimension. `>1` will be landscaped. `<1` will be portrait.
-- Example:
-
-```js
-condition: {
-  fromDate: "2018-01-01", // I don't want older photos than this.
-  minWidth: 600, // I don't want to display some icons or meme-pictures from my garbage collecting albums.
-  maxWHRatio: 1, // I want to display photos which are portrait.
-}
-```
-
-### `showWidth`, `showHeight`
-
-- Specify your real resolution to show.
-
-### `timeFormat`
-
-- Specify time format for photo info. You can also use `relative` to show more humanized.
-
-### `debug`
-
-- If set, more detailed info will be logged.
-
-### `autoInfoPosition`
-
-- For preventing LCD burning, Photo info can be relocated by condition.
-  - `true` : automatically change position to each corner per 15 minutes.
-  - `false` : not using.
-  - callbackfunction (album, photo) : User can make his own position. It should return `[top, left, bottom, right]`
-
-```js
-autoInfoPosition: true, // or false
-
-// User custom callback
-autoInfoPosition: (album, photo)=> {
- return ['10px', '10px', 'none', 'none'] // This will show photo info top-left corner.
-}
-
-```
+- Specify the maximum width and height for the photos in pixels. The module will automatically rotate and resize the photos to fit your display while maintaining the aspect ratio.
 
 ## Tip
 
@@ -206,9 +223,3 @@ autoInfoPosition: (album, photo)=> {
 
 - First scanning will take a few (~dozens) seconds. Don't panic.
 - If there are 1000s of photos, this scan could take minutes(over 10). longer scans increase the probablity of an error happening. If a single error happens in the scan, it will retry after 1 hour. After first successful scan, subsequent startups should go very quickly(seconds).
--
-
-## Last Tested
-
-- MagicMirror : v2.26.0
-- node.js : required over v18.
