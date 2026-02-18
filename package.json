@@ -20,8 +20,9 @@
     "GooglePhotos"
   ],
   "dependencies": {
-    "@google-cloud/local-auth": "^2.1.0",
-    "googleapis": "^128.0.0",
+    "@google-cloud/local-auth": "^3.0.1",
+    "axios": "^1.7.0",
+    "google-auth-library": "^9.0.0",
     "moment": "^2.29.4"
   },
   "devDependencies": {
@@ -34,5 +35,9 @@
   },
   "engines": {
     "node": ">=18"
+  },
+  "overrides": {
+    "whatwg-url": "^14.0.0",
+    "tr46": "^5.0.0"
   }
 }

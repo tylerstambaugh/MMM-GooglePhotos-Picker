@@ -3,7 +3,6 @@
 const EventEmitter = require("events");
 const fs = require("fs");
 const path = require("path");
-const { mkdirp } = require("mkdirp");
 const { OAuth2Client } = require("google-auth-library");
 
 /**
@@ -73,7 +72,7 @@ class Auth extends EventEmitter {
         const tk = await oauthClient.refreshAccessToken();
         tokensCred = tk.credentials;
         let tp = path.resolve(__dirname, this.#config.savedTokensPath);
-        await mkdirp(path.dirname(tp));
+        fs.mkdirSync(path.dirname(tp), { recursive: true });
         fs.writeFileSync(tp, JSON.stringify(tokensCred));
         log("Token is refreshed.");
         this.emit("ready", oauthClient);

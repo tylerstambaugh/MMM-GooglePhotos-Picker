@@ -57,16 +57,18 @@ Module.register("MMM-GooglePhotos", {
     }
 
     this.sendSocketNotification("INIT", config);
-    this.scheduleUpdate();
   },
 
   socketNotificationReceived: function (notification, payload) {
     if (notification === "UPLOADABLE_ALBUM") {
       this.uploadableAlbum = payload;
     }
+    if (notification === "PICKER_SESSION") {
+      // Show picker URI for user to select photos
+      this.showPickerPrompt(payload.pickerUri);
+    }
     if (notification === "INITIALIZED") {
       this.albums = payload;
-      //set up timer once initialized, more robust against faults
       if (!this.updateTimer || this.updateTimer === null) {
         Log.info("Start timer for updating photos.");
         this.updateTimer = setInterval(() => {
@@ -82,41 +84,35 @@ Module.register("MMM-GooglePhotos", {
       this.scanned = payload;
       this.index = 0;
       if (this.firstScan) {
-        this.updatePhotos(); //little faster starting
+        this.updatePhotos();
       }
     }
     if (notification === "ERROR") {
       const current = document.getElementById("GPHOTO_CURRENT");
-      const errMsgDiv = document.createElement("div");
-      errMsgDiv.style.textAlign = "center";
-      errMsgDiv.style.lineHeight = "80vh";
-      errMsgDiv.style.fontSize = "1.5em";
-      errMsgDiv.style.verticalAlign = "middle";
-      errMsgDiv.textContent = payload;
-      current.appendChild(errMsgDiv);
+      if (current) {
+        current.textContent = "";
+        const errMsgDiv = document.createElement("div");
+        errMsgDiv.style.textAlign = "center";
+        errMsgDiv.style.lineHeight = "80vh";
+        errMsgDiv.style.fontSize = "1.5em";
+        errMsgDiv.style.verticalAlign = "middle";
+        errMsgDiv.textContent = payload;
+        current.appendChild(errMsgDiv);
+      }
     }
     if (notification === "CLEAR_ERROR") {
       const current = document.getElementById("GPHOTO_CURRENT");
-      current.textContent = "";
+      if (current) current.textContent = "";
     }
     if (notification === "UPDATE_STATUS") {
-      let info = document.getElementById("GPHOTO_INFO");
-      info.innerHTML = String(payload);
-    }
-    if (notification === 'PHOTO') {
-      this.currentPhoto = payload;
-      this.updateDom(1000);
-    } else if (notification === 'AUTH_REQUIRED') {
-      console.error('Authentication required. Please run: node auth_setup.js');
-      this.currentPhoto = {error: 'Authentication required'};
-      this.updateDom();
-    } else if (notification === 'ERROR') {
-      console.error('Error:', payload);
-      this.currentPhoto = {error: payload};
-      this.updateDom();
-    } else if (notification === 'NO_PHOTOS') {
-      this.currentPhoto = {error: 'No photos found'};
-      this.updateDom();
+      // Update status in the picker prompt area if visible, otherwise info bar
+      let statusEl = document.getElementById("GPHOTO_PICKER_STATUS");
+      if (statusEl) {
+        statusEl.textContent = String(payload);
+      } else {
+        let info = document.getElementById("GPHOTO_INFO");
+        if (info) info.innerHTML = String(payload);
+      }
     }
   },
 
@@ -166,32 +162,70 @@ Module.register("MMM-GooglePhotos", {
     }
   },
 
+  showPickerPrompt: function (pickerUri) {
+    const current = document.getElementById("GPHOTO_CURRENT");
+    if (!current) return;
+    current.textContent = "";
+    const prompt = document.createElement("div");
+    prompt.style.textAlign = "center";
+    prompt.style.padding = "20px";
+    prompt.innerHTML = `
+      <div style="font-size:1.3em; margin-bottom:15px;">Select your photos</div>
+      <div style="font-size:0.9em; margin-bottom:15px;">Open this link on your phone or computer to choose photos:</div>
+      <a href="${pickerUri}" target="_blank" style="color:#4fc3f7; word-break:break-all; font-size:0.8em;">${pickerUri}</a>
+      <div style="margin-top:10px; font-size:0.8em; color:#aaa;">After selecting photos, click <strong>Done</strong> in the Google Photos picker.</div>
+      <div id="GPHOTO_PICKER_STATUS" style="margin-top:15px; font-size:0.75em; color:#888;">Waiting for photo selection...</div>
+    `;
+    current.appendChild(prompt);
+  },
+
   ready: function (url, target) {
-    let hidden = document.createElement("img");
-    const _this = this;
-    hidden.onerror = (event, source, lineno, colno, error) => {
-      const errObj = { url, event, source, lineno, colno, error };
-      this.sendSocketNotification("IMAGE_LOAD_FAIL", errObj);
-    };
-    hidden.onload = () => {
-      _this.render(url, target);
-    };
-    hidden.src = url;
+    // Picker API baseUrls require an Authorization header,
+    // so we use fetch() + createObjectURL instead of direct img.src
+    if (target._accessToken) {
+      const _this = this;
+      fetch(url, {
+        headers: { Authorization: "Bearer " + target._accessToken },
+      })
+        .then((res) => {
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          return res.blob();
+        })
+        .then((blob) => {
+          const objectUrl = URL.createObjectURL(blob);
+          _this.render(objectUrl, target);
+        })
+        .catch((err) => {
+          Log.error("Image fetch error:", err);
+          _this.sendSocketNotification("IMAGE_LOAD_FAIL", { url });
+        });
+    } else {
+      // Fallback: direct load (Library API style)
+      let hidden = document.createElement("img");
+      const _this = this;
+      hidden.onerror = () => {
+        _this.sendSocketNotification("IMAGE_LOAD_FAIL", { url });
+      };
+      hidden.onload = () => {
+        _this.render(url, target);
+      };
+      hidden.src = url;
+    }
   },
 
   render: function (url, target) {
     let back = document.getElementById("GPHOTO_BACK");
     let current = document.getElementById("GPHOTO_CURRENT");
+    if (!current || !back) return;
     current.textContent = "";
-    //current.classList.remove("animated")
-    // let dom = document.getElementById("GPHOTO");
     back.style.backgroundImage = `url(${url})`;
     current.style.backgroundImage = `url(${url})`;
     current.classList.add("animated");
     const info = document.getElementById("GPHOTO_INFO");
-    const album = Array.isArray(this.albums) ? this.albums.find((a) => a.id === target._albumId) : { id: -1, title: '' };
+    if (!info) return;
+
     if (this.config.autoInfoPosition) {
-      let op = (album, target) => {
+      let op = () => {
         let now = new Date();
         let q = Math.floor(now.getMinutes() / 15);
         let r = [
@@ -205,59 +239,42 @@ Module.register("MMM-GooglePhotos", {
       if (typeof this.config.autoInfoPosition === "function") {
         op = this.config.autoInfoPosition;
       }
-      const [top, left, bottom, right] = op(album, target);
+      const [top, left, bottom, right] = op({}, target);
       info.style.setProperty("--top", top);
       info.style.setProperty("--left", left);
       info.style.setProperty("--bottom", bottom);
       info.style.setProperty("--right", right);
     }
+
     info.innerHTML = "";
-    let albumCover = document.createElement("div");
-    albumCover.classList.add("albumCover");
-    albumCover.style.backgroundImage = `url(modules/MMM-GooglePhotos/cache/${album.id})`;
-    let albumTitle = document.createElement("div");
-    albumTitle.classList.add("albumTitle");
-    albumTitle.innerHTML = album.title;
     let photoTime = document.createElement("div");
     photoTime.classList.add("photoTime");
-    photoTime.innerHTML = this.config.timeFormat === "relative" ? moment(target.mediaMetadata.creationTime).fromNow() : moment(target.mediaMetadata.creationTime).format(this.config.timeFormat);
+    if (target.mediaMetadata && target.mediaMetadata.creationTime) {
+      photoTime.innerHTML =
+        this.config.timeFormat === "relative"
+          ? moment(target.mediaMetadata.creationTime).fromNow()
+          : moment(target.mediaMetadata.creationTime).format(this.config.timeFormat);
+    }
     let infoText = document.createElement("div");
     infoText.classList.add("infoText");
-
-    info.appendChild(albumCover);
-    infoText.appendChild(albumTitle);
     infoText.appendChild(photoTime);
     info.appendChild(infoText);
     this.sendSocketNotification("IMAGE_LOADED", { id: target.id, index: this.index });
   },
 
   getDom: function () {
-    const wrapper = document.createElement("div");
-    wrapper.className = "MMM-GooglePhotos";
-
-    if (!this.currentPhoto) {
-      wrapper.innerHTML = "Loading photos...";
-      return wrapper;
-    }
-
-    if (this.currentPhoto.error) {
-      wrapper.innerHTML = `Error: ${this.currentPhoto.error}`;
-      return wrapper;
-    }
-
-    const img = document.createElement("img");
-    img.src = this.currentPhoto.url;
-    img.style.maxWidth = this.config.maxWidth + "px";
-    img.style.maxHeight = this.config.maxHeight + "px";
-    wrapper.appendChild(img);
-
-    return wrapper;
-  },
-
-  scheduleUpdate: function () {
-    setInterval(() => {
-      this.sendSocketNotification("NEXT_PHOTO");
-    }, this.config.updateInterval);
+    let dom = document.createElement("div");
+    dom.id = "GPHOTO";
+    let back = document.createElement("div");
+    back.id = "GPHOTO_BACK";
+    let current = document.createElement("div");
+    current.id = "GPHOTO_CURRENT";
+    let info = document.createElement("div");
+    info.id = "GPHOTO_INFO";
+    dom.appendChild(back);
+    dom.appendChild(current);
+    dom.appendChild(info);
+    return dom;
   },
 
   suspend() {
