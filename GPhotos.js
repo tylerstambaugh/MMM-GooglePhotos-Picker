@@ -3,7 +3,6 @@
 const EventEmitter = require("events");
 const fs = require("fs");
 const path = require("path");
-const { mkdirp } = require("mkdirp");
 const { OAuth2Client } = require("google-auth-library");
 
 /**
@@ -37,50 +36,50 @@ class Auth extends EventEmitter {
 		);
 	}
 
-	async init() {
-		const log = this.#debug
-			? (...args) => {
-				console.log("[GPHOTOS:AUTH]", ...args);
-			}
-			: () => { };
-		if (this.#config === undefined) this.#config = {};
-		if (this.#config.keyFilePath === undefined) {
-			throw new ConfigFileError('Missing "keyFilePath" from config (This should be where your Credential file is)');
-		}
-		if (this.#config.savedTokensPath === undefined) {
-			throw new ConfigFileError('Missing "savedTokensPath" from config (this should be where your OAuth2 access tokens will be saved)');
-		}
-		let file = path.resolve(__dirname, this.#config.savedTokensPath);
-		if (!fs.existsSync(file)) {
-			throw new AuthError("No OAuth token genreated. Please execute generate_token_v2.js before start.");
-		}
-		let creds = path.resolve(__dirname, this.#config.keyFilePath);
-		if (!fs.existsSync(creds)) {
-			throw new AuthError("Missing Credentials.");
-		}
-		const key = require(this.#config.keyFilePath).installed;
-		const oauthClient = new OAuth2Client(key.client_id, key.client_secret, key.redirect_uris[0]);
-		let tokensCred;
-		const saveTokens = async (first = false) => {
-			oauthClient.setCredentials(tokensCred);
-			let expired = false;
-			if (tokensCred.expiry_date < Date.now()) {
-				expired = true;
-				log("Token is expired.");
-			}
-			if (expired || first) {
-				const tk = await oauthClient.refreshAccessToken();
-				tokensCred = tk.credentials;
-				let tp = path.resolve(__dirname, this.#config.savedTokensPath);
-				await mkdirp(path.dirname(tp));
-				fs.writeFileSync(tp, JSON.stringify(tokensCred));
-				log("Token is refreshed.");
-				this.emit("ready", oauthClient);
-			} else {
-				log("Token is alive.");
-				this.emit("ready", oauthClient);
-			}
-		};
+  async init() {
+    const log = this.#debug
+      ? (...args) => {
+        console.log("[GPHOTOS:AUTH]", ...args);
+      }
+      : () => { };
+    if (this.#config === undefined) this.#config = {};
+    if (this.#config.keyFilePath === undefined) {
+      throw new ConfigFileError('Missing "keyFilePath" from config (This should be where your Credential file is)');
+    }
+    if (this.#config.savedTokensPath === undefined) {
+      throw new ConfigFileError('Missing "savedTokensPath" from config (this should be where your OAuth2 access tokens will be saved)');
+    }
+    let file = path.resolve(__dirname, this.#config.savedTokensPath);
+    if (!fs.existsSync(file)) {
+      throw new AuthError("No OAuth token genreated. Please execute generate_token_v2.js before start.");
+    }
+    let creds = path.resolve(__dirname, this.#config.keyFilePath);
+    if (!fs.existsSync(creds)) {
+      throw new AuthError("Missing Credentials.");
+    }
+    const key = require(this.#config.keyFilePath).installed;
+    const oauthClient = new OAuth2Client(key.client_id, key.client_secret, key.redirect_uris[0]);
+    let tokensCred;
+    const saveTokens = async (first = false) => {
+      oauthClient.setCredentials(tokensCred);
+      let expired = false;
+      if (tokensCred.expiry_date < Date.now()) {
+        expired = true;
+        log("Token is expired.");
+      }
+      if (expired || first) {
+        const tk = await oauthClient.refreshAccessToken();
+        tokensCred = tk.credentials;
+        let tp = path.resolve(__dirname, this.#config.savedTokensPath);
+        fs.mkdirSync(path.dirname(tp), { recursive: true });
+        fs.writeFileSync(tp, JSON.stringify(tokensCred));
+        log("Token is refreshed.");
+        this.emit("ready", oauthClient);
+      } else {
+        log("Token is alive.");
+        this.emit("ready", oauthClient);
+      }
+    };
 
 		process.nextTick(() => {
 			if (this.#config.savedTokensPath) {
