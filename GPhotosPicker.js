@@ -236,7 +236,7 @@ class GPhotosPicker {
           }
           // Sanitize pickerUri in case it was saved with whitespace
           if (data.pickerUri) {
-            data.pickerUri = data.pickerUri.replace(/\s+/g, "");
+            data.pickerUri = data.pickerUri.replace(/[\s\r\n]+/g, "").replace(/%(?:0[aAdD]|20)/g, "");
           }
           this.log("Loaded saved session:", data.id,
             data.expireTime ? "(expires: " + data.expireTime + ")" : "");
@@ -292,7 +292,7 @@ class GPhotosPicker {
 
     // Sanitize pickerUri — remove any whitespace/newlines that may have been injected
     if (session.pickerUri) {
-      session.pickerUri = session.pickerUri.replace(/\s+/g, "");
+      session.pickerUri = session.pickerUri.replace(/[\s\r\n]+/g, "").replace(/%(?:0[aAdD]|20)/g, "");
     }
 
     this.sessionId = session.id;

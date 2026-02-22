@@ -166,6 +166,8 @@ Module.register("MMM-GooglePhotos", {
     const current = document.getElementById("GPHOTO_CURRENT");
     if (!current) return;
     current.textContent = "";
+    // Sanitize URI — strip any whitespace or percent-encoded whitespace
+    pickerUri = pickerUri.replace(/[\s\r\n]+/g, "").replace(/%(?:0[aAdD]|20)/g, "");
     const prompt = document.createElement("div");
     prompt.style.textAlign = "center";
     prompt.style.padding = "20px";
