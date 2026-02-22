@@ -1,6 +1,7 @@
 const NodeHelper = require("node_helper");
 const fs = require("fs");
 const path = require("path");
+const QRCode = require("qrcode");
 const GPhotosPicker = require("./GPhotosPicker.js");
 const { shuffle } = require("./shuffle.js");
 
@@ -67,10 +68,7 @@ module.exports = NodeHelper.create({
 
             // Show the picker URI again so user can continue selecting
             if (saved.pickerUri) {
-              this.sendSocketNotification("PICKER_SESSION", {
-                pickerUri: saved.pickerUri,
-                sessionId: saved.id,
-              });
+              await this.sendPickerSession(saved.pickerUri, saved.id);
             }
 
             this.pollForSelection();
@@ -95,17 +93,36 @@ module.exports = NodeHelper.create({
     }
   },
 
+  sendPickerSession: async function (pickerUri, sessionId) {
+    try {
+      const qrDataUrl = await QRCode.toDataURL(pickerUri, {
+        width: 300,
+        margin: 2,
+        color: { dark: "#000000", light: "#ffffff" },
+      });
+      this.sendSocketNotification("PICKER_SESSION", {
+        pickerUri: pickerUri,
+        qrCode: qrDataUrl,
+        sessionId: sessionId,
+      });
+    } catch (err) {
+      this.logError("QR code generation failed:", err.toString());
+      this.sendSocketNotification("PICKER_SESSION", {
+        pickerUri: pickerUri,
+        qrCode: null,
+        sessionId: sessionId,
+      });
+    }
+  },
+
   createNewSession: async function () {
     try {
       const session = await this.picker.createSession();
       this.sessionId = session.id;
       this.sessionReady = false;
 
-      // Tell the frontend to show the picker URI
-      this.sendSocketNotification("PICKER_SESSION", {
-        pickerUri: session.pickerUri,
-        sessionId: session.id,
-      });
+      // Tell the frontend to show the picker URI with QR code
+      await this.sendPickerSession(session.pickerUri, session.id);
 
       this.log("Picker session created. Waiting for user to select photos...");
       this.log("Picker URI:", session.pickerUri);

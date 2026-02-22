@@ -64,8 +64,8 @@ Module.register("MMM-GooglePhotos", {
       this.uploadableAlbum = payload;
     }
     if (notification === "PICKER_SESSION") {
-      // Show picker URI for user to select photos
-      this.showPickerPrompt(payload.pickerUri);
+      // Show picker URI + QR code for user to select photos
+      this.showPickerPrompt(payload.pickerUri, payload.qrCode);
     }
     if (notification === "INITIALIZED") {
       this.albums = payload;
@@ -162,22 +162,75 @@ Module.register("MMM-GooglePhotos", {
     }
   },
 
-  showPickerPrompt: function (pickerUri) {
+  showPickerPrompt: function (pickerUri, qrCode) {
     const current = document.getElementById("GPHOTO_CURRENT");
     if (!current) return;
     current.textContent = "";
-    // Sanitize URI — strip any whitespace or percent-encoded whitespace
-    pickerUri = pickerUri.replace(/[\s\r\n]+/g, "").replace(/%(?:0[aAdD]|20)/g, "");
+
     const prompt = document.createElement("div");
     prompt.style.textAlign = "center";
     prompt.style.padding = "20px";
-    prompt.innerHTML = `
-      <div style="font-size:1.3em; margin-bottom:15px;">Select your photos</div>
-      <div style="font-size:0.9em; margin-bottom:15px;">Open this link on your phone or computer to choose photos:</div>
-      <a href="${pickerUri}" target="_blank" style="color:#4fc3f7; word-break:break-all; font-size:0.8em;">${pickerUri}</a>
-      <div style="margin-top:10px; font-size:0.8em; color:#aaa;">After selecting photos, click <strong>Done</strong> in the Google Photos picker.</div>
-      <div id="GPHOTO_PICKER_STATUS" style="margin-top:15px; font-size:0.75em; color:#888;">Waiting for photo selection...</div>
-    `;
+    prompt.style.display = "flex";
+    prompt.style.flexDirection = "column";
+    prompt.style.alignItems = "center";
+    prompt.style.justifyContent = "center";
+    prompt.style.height = "100%";
+
+    const title = document.createElement("div");
+    title.style.fontSize = "1.3em";
+    title.style.marginBottom = "15px";
+    title.textContent = "Select your photos";
+    prompt.appendChild(title);
+
+    if (qrCode) {
+      const instruction = document.createElement("div");
+      instruction.style.fontSize = "0.9em";
+      instruction.style.marginBottom = "15px";
+      instruction.style.opacity = "0.8";
+      instruction.textContent = "Scan this QR code with your phone:";
+      prompt.appendChild(instruction);
+
+      const qrImg = document.createElement("img");
+      qrImg.src = qrCode;
+      qrImg.style.width = "300px";
+      qrImg.style.height = "300px";
+      qrImg.style.borderRadius = "8px";
+      qrImg.style.marginBottom = "15px";
+      prompt.appendChild(qrImg);
+    } else {
+      const instruction = document.createElement("div");
+      instruction.style.fontSize = "0.9em";
+      instruction.style.marginBottom = "15px";
+      instruction.style.opacity = "0.8";
+      instruction.textContent = "Open this link on your phone or computer:";
+      prompt.appendChild(instruction);
+
+      const link = document.createElement("div");
+      link.style.fontSize = "0.7em";
+      link.style.wordBreak = "break-all";
+      link.style.padding = "10px";
+      link.style.backgroundColor = "rgba(255,255,255,0.1)";
+      link.style.borderRadius = "8px";
+      link.style.maxWidth = "80%";
+      link.textContent = pickerUri;
+      prompt.appendChild(link);
+    }
+
+    const hint = document.createElement("div");
+    hint.style.marginTop = "10px";
+    hint.style.fontSize = "0.8em";
+    hint.style.color = "#aaa";
+    hint.innerHTML = "After selecting photos, click <strong>Done</strong> in the Google Photos picker.";
+    prompt.appendChild(hint);
+
+    const status = document.createElement("div");
+    status.id = "GPHOTO_PICKER_STATUS";
+    status.style.marginTop = "15px";
+    status.style.fontSize = "0.75em";
+    status.style.color = "#888";
+    status.textContent = "Waiting for photo selection...";
+    prompt.appendChild(status);
+
     current.appendChild(prompt);
   },
 
