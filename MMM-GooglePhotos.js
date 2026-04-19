@@ -148,8 +148,9 @@ Module.register("MMM-GooglePhotos", {
       this.index -= this.scanned.length;
     }
     let target = this.scanned[this.index];
-    let url = target.baseUrl + `=w${this.config.showWidth}-h${this.config.showHeight}`;
-    this.ready(url, target);
+    // baseUrl now points at a locally cached file already sized to
+    // showWidth × showHeight — no need to append a resize suffix.
+    this.ready(target.baseUrl, target);
     this.index++;
     if (this.index >= this.scanned.length) {
       this.index = 0;
@@ -235,37 +236,17 @@ Module.register("MMM-GooglePhotos", {
   },
 
   ready: function (url, target) {
-    // Picker API baseUrls require an Authorization header,
-    // so we use fetch() + createObjectURL instead of direct img.src
-    if (target._accessToken) {
-      const _this = this;
-      fetch(url, {
-        headers: { Authorization: "Bearer " + target._accessToken },
-      })
-        .then((res) => {
-          if (!res.ok) throw new Error("HTTP " + res.status);
-          return res.blob();
-        })
-        .then((blob) => {
-          const objectUrl = URL.createObjectURL(blob);
-          _this.render(objectUrl, target);
-        })
-        .catch((err) => {
-          Log.error("Image fetch error:", err);
-          _this.sendSocketNotification("IMAGE_LOAD_FAIL", { url });
-        });
-    } else {
-      // Fallback: direct load (Library API style)
-      let hidden = document.createElement("img");
-      const _this = this;
-      hidden.onerror = () => {
-        _this.sendSocketNotification("IMAGE_LOAD_FAIL", { url });
-      };
-      hidden.onload = () => {
-        _this.render(url, target);
-      };
-      hidden.src = url;
-    }
+    // Photos are served from the local cache at /modules/MMM-GooglePhotos/cache/,
+    // so a plain <img> load is enough — no auth header needed.
+    const _this = this;
+    const hidden = document.createElement("img");
+    hidden.onerror = () => {
+      _this.sendSocketNotification("IMAGE_LOAD_FAIL", { url });
+    };
+    hidden.onload = () => {
+      _this.render(url, target);
+    };
+    hidden.src = url;
   },
 
   render: function (url, target) {

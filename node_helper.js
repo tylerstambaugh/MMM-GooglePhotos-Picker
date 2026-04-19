@@ -1,8 +1,7 @@
 const NodeHelper = require("node_helper");
-const fs = require("fs");
-const path = require("path");
 const QRCode = require("qrcode");
 const GPhotosPicker = require("./GPhotosPicker.js");
+const PhotoCache = require("./PhotoCache.js");
 const { shuffle } = require("./shuffle.js");
 
 const authOption = require("./google_auth.json");
@@ -11,11 +10,9 @@ module.exports = NodeHelper.create({
   start: function () {
     this.picker = null;
     this.config = null;
-    this.mediaItems = [];
+    this.cache = new PhotoCache();
     this.sessionId = null;
     this.sessionReady = false;
-    this.baseUrlRefreshTimer = null;
-    this.accessToken = null;
   },
 
   socketNotificationReceived: function (notification, payload) {
@@ -27,9 +24,7 @@ module.exports = NodeHelper.create({
         }
         break;
       case "NEED_MORE_PICS":
-        if (this.sessionReady && this.mediaItems.length > 0) {
-          this.sendPhotos();
-        }
+        if (!this.cache.isEmpty()) this.sendPhotos();
         break;
       case "IMAGE_LOADED":
         break;
@@ -47,40 +42,51 @@ module.exports = NodeHelper.create({
         authOption: authOption,
         debug: this.config.debug || false,
       });
+      this.cache.load();
 
-      // Try to resume a saved session first
+      // Cache-first: if we already have photos on disk, rotate them and skip
+      // the Picker API entirely. Session expiry no longer matters.
+      if (!this.cache.isEmpty()) {
+        this.log(
+          "Cache has",
+          this.cache.count(),
+          "photos — skipping picker, starting rotation.",
+        );
+        this.sendSocketNotification("INITIALIZED", []);
+        this.sendPhotos();
+        return;
+      }
+
+      // Empty cache — check for a saved session we can resume (e.g. a crash
+      // mid-pick or mid-download on the previous run).
       const saved = this.picker.loadSavedSession();
       if (saved && saved.id) {
         this.log("Attempting to resume saved session:", saved.id);
         try {
           const session = await this.picker.getSession(saved.id);
           if (session.mediaItemsSet) {
-            this.log("Saved session has photos ready!");
+            this.log("Saved session has photos ready — downloading to cache.");
             this.sessionId = saved.id;
             this.sessionReady = true;
-            await this.fetchAndSendPhotos();
-            this.startBaseUrlRefresh();
-            return;
-          } else {
-            // Session is still valid but user hasn't picked yet — resume polling
-            this.log("Saved session still active, resuming poll for selection.");
-            this.sessionId = saved.id;
-
-            // Show the picker URI again so user can continue selecting
-            if (saved.pickerUri) {
-              await this.sendPickerSession(saved.pickerUri, saved.id);
-            }
-
-            this.pollForSelection();
+            await this.downloadAndCachePhotos();
             return;
           }
+          this.log("Saved session still active, resuming poll for selection.");
+          this.sessionId = saved.id;
+          if (saved.pickerUri) {
+            await this.sendPickerSession(saved.pickerUri, saved.id);
+          }
+          this.pollForSelection();
+          return;
         } catch (e) {
-          this.log("Saved session invalid or expired, creating new.", e.message || "");
+          this.log(
+            "Saved session invalid or expired, creating new.",
+            e.message || "",
+          );
           this.picker.clearSession();
         }
       }
 
-      // No valid saved session — create a new one
       await this.createNewSession();
     } catch (err) {
       this.logError("Initialization error:", err.toString());
@@ -121,13 +127,11 @@ module.exports = NodeHelper.create({
       this.sessionId = session.id;
       this.sessionReady = false;
 
-      // Tell the frontend to show the picker URI with QR code
       await this.sendPickerSession(session.pickerUri, session.id);
 
       this.log("Picker session created. Waiting for user to select photos...");
       this.log("Picker URI:", session.pickerUri);
 
-      // Start polling for user selection
       this.pollForSelection();
     } catch (err) {
       this.logError("Failed to create picker session:", err.toString());
@@ -150,8 +154,7 @@ module.exports = NodeHelper.create({
       if (ready) {
         this.sessionReady = true;
         this.sendSocketNotification("CLEAR_ERROR");
-        await this.fetchAndSendPhotos();
-        this.startBaseUrlRefresh();
+        await this.downloadAndCachePhotos();
       } else {
         this.log("Picker session timed out. Creating new session...");
         this.picker.clearSession();
@@ -167,71 +170,120 @@ module.exports = NodeHelper.create({
     }
   },
 
-  fetchAndSendPhotos: async function () {
-    try {
-      const items = await this.picker.listMediaItems(this.sessionId);
+  /**
+   * Eager download: pull every picked photo to disk at display resolution,
+   * then start rotation. Errors propagate so `initialize` can retry.
+   */
+  downloadAndCachePhotos: async function () {
+    const items = await this.picker.listMediaItems(this.sessionId);
 
-      // Filter to images only
-      this.mediaItems = items.filter(
-        (item) =>
-          item.type === "PHOTO" ||
-          (item.mediaFile &&
-            item.mediaFile.mimeType &&
-            item.mediaFile.mimeType.startsWith("image/")),
-      );
+    const photos = items.filter(
+      (item) =>
+        item.type === "PHOTO" ||
+        (item.mediaFile &&
+          item.mediaFile.mimeType &&
+          item.mediaFile.mimeType.startsWith("image/")),
+    );
 
-      if (this.mediaItems.length === 0) {
-        this.sendSocketNotification(
-          "ERROR",
-          "No photos found in selection. Please select some photos.",
-        );
-        return;
-      }
-
-      this.accessToken = await this.picker.getAccessToken();
-      this.log("Total photos available:", this.mediaItems.length);
-      this.sendSocketNotification("INITIALIZED", []);
-      this.sendPhotos();
-    } catch (err) {
-      this.logError("Fetch photos error:", err.toString());
+    if (photos.length === 0) {
       this.sendSocketNotification(
         "ERROR",
-        "Failed to retrieve photos: " + err.toString(),
+        "No photos found in selection. Please select some photos.",
+      );
+      return;
+    }
+
+    const width = this.config.showWidth || 1080;
+    const height = this.config.showHeight || 1920;
+    let success = 0;
+    let failed = 0;
+
+    this.log(`Starting eager download of ${photos.length} photos…`);
+
+    for (let i = 0; i < photos.length; i++) {
+      const item = photos[i];
+      if (this.cache.has(item.id)) {
+        success++;
+        continue;
+      }
+      const mediaFile = item.mediaFile || {};
+      if (!mediaFile.baseUrl) {
+        failed++;
+        continue;
+      }
+      this.sendSocketNotification(
+        "UPDATE_STATUS",
+        `Downloading photo ${i + 1} of ${photos.length}…`,
+      );
+      try {
+        const buffer = await this.picker.downloadPhoto(
+          mediaFile.baseUrl,
+          width,
+          height,
+        );
+        this.cache.add(item.id, buffer, {
+          mimeType: mediaFile.mimeType || "image/jpeg",
+          creationTime: item.createTime || new Date().toISOString(),
+          width: mediaFile.mediaFileMetadata?.width || null,
+          height: mediaFile.mediaFileMetadata?.height || null,
+        });
+        // Persist after each download so a mid-batch crash keeps progress
+        this.cache.save();
+        success++;
+      } catch (err) {
+        this.logError(
+          `Download failed for ${item.id}:`,
+          err.message || err.toString(),
+        );
+        failed++;
+      }
+    }
+
+    if (success === 0) {
+      throw new Error(
+        `All ${photos.length} photo downloads failed — check auth and network.`,
       );
     }
+
+    this.log(
+      `Download complete: ${success} succeeded, ${failed} failed. Cache has ${this.cache.count()} photos.`,
+    );
+
+    // Session has done its job. Drop it so a stale ID isn't resumed next boot.
+    this.picker.clearSession();
+    this.sessionId = null;
+    this.sessionReady = false;
+
+    this.sendSocketNotification("INITIALIZED", []);
+    this.sendPhotos();
   },
 
   sendPhotos: function () {
-    if (this.mediaItems.length === 0) return;
+    const photos = this.cache.list();
+    if (photos.length === 0) return;
 
-    // Transform to format the frontend expects
-    const photos = this.mediaItems.map((item) => {
-      const mediaFile = item.mediaFile || {};
-      return {
-        id: item.id,
-        baseUrl: mediaFile.baseUrl || "",
-        mimeType: mediaFile.mimeType || "image/jpeg",
-        mediaMetadata: {
-          creationTime: item.createTime || new Date().toISOString(),
-          width: mediaFile.mediaFileMetadata?.width || "1920",
-          height: mediaFile.mediaFileMetadata?.height || "1080",
-        },
-        _albumId: "picker",
-        _accessToken: this.accessToken,
-      };
-    });
+    const payload = photos.map((p) => ({
+      id: p.id,
+      baseUrl: p.url,
+      mimeType: p.mimeType,
+      mediaMetadata: {
+        creationTime: p.creationTime,
+        width: p.width ? String(p.width) : "1920",
+        height: p.height ? String(p.height) : "1080",
+      },
+    }));
 
     let sorted;
     if (this.config.sort === "random") {
-      sorted = shuffle([...photos]);
+      sorted = shuffle([...payload]);
     } else if (this.config.sort === "old") {
-      sorted = [...photos].sort(
+      sorted = [...payload].sort(
         (a, b) =>
           new Date(a.mediaMetadata.creationTime) -
           new Date(b.mediaMetadata.creationTime),
       );
     } else {
-      sorted = [...photos].sort(
+      sorted = [...payload].sort(
         (a, b) =>
           new Date(b.mediaMetadata.creationTime) -
           new Date(a.mediaMetadata.creationTime),
@@ -239,35 +291,6 @@ module.exports = NodeHelper.create({
     }
 
     this.sendSocketNotification("MORE_PICS", sorted);
-  },
-
-  startBaseUrlRefresh: function () {
-    if (this.baseUrlRefreshTimer) clearInterval(this.baseUrlRefreshTimer);
-    // Refresh every 50 minutes (baseUrls expire after 60)
-    this.baseUrlRefreshTimer = setInterval(async () => {
-      if (!this.sessionReady || !this.sessionId) return;
-      this.log("Refreshing media item baseUrls...");
-      try {
-        await this.fetchAndSendPhotos();
-      } catch (err) {
-        this.logError("BaseUrl refresh error:", err.toString());
-        // Check if the session itself is still valid before nuking it
-        try {
-          const session = await this.picker.getSession(this.sessionId);
-          if (session && session.mediaItemsSet) {
-            this.log("Session still valid, will retry refresh next cycle.");
-            return; // Keep session, retry on next interval
-          }
-        } catch (checkErr) {
-          this.logError("Session check also failed:", checkErr.toString());
-        }
-        // Only create new session if the old one is truly dead
-        this.log("Session appears expired. Creating new picker session...");
-        this.picker.clearSession();
-        this.sessionReady = false;
-        await this.createNewSession();
-      }
-    }, 50 * 60 * 1000);
   },
 
   log: function (...args) {

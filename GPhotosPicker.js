@@ -143,6 +143,8 @@ class GPhotosPicker {
   /**
    * Parse a protobuf Duration string (e.g. "5s", "2.5s") to milliseconds.
    * Falls back to defaultMs if parsing fails.
+   * @param durationStr
+   * @param defaultMs
    */
   parseDuration(durationStr, defaultMs = 15000) {
     if (!durationStr) return defaultMs;
@@ -188,6 +190,11 @@ class GPhotosPicker {
 
   /**
    * Make an authenticated request to the Picker API
+   * @param token
+   * @param endpoint
+   * @param method
+   * @param params
+   * @param data
    */
   async request(token, endpoint, method = "get", params = null, data = null) {
     try {
@@ -251,6 +258,7 @@ class GPhotosPicker {
 
   /**
    * Save session to disk
+   * @param sessionData
    */
   saveSession(sessionData) {
     const sessionPath = path.resolve(__dirname, SESSION_FILE);
@@ -341,7 +349,7 @@ class GPhotosPicker {
   /**
    * Poll session until mediaItemsSet is true or timeout
    * @param {string} sessionId
-   * @param {function} onStatus callback for status updates
+   * @param {Function} onStatus callback for status updates
    * @returns {Promise<boolean>} true if media items are set
    */
   async pollSession(sessionId, onStatus = null) {
@@ -441,6 +449,28 @@ class GPhotosPicker {
   async getAccessToken() {
     const client = await this.onAuthReady();
     return client.credentials.access_token;
+  }
+
+  /**
+   * Download a photo from a Picker baseUrl at the given display size.
+   * Returns the raw image bytes as a Buffer.
+   * @param {string} baseUrl the `mediaFile.baseUrl` from listMediaItems
+   * @param {number} width
+   * @param {number} height
+   * @returns {Promise<Buffer>}
+   */
+  async downloadPhoto(baseUrl, width, height) {
+    const client = await this.onAuthReady();
+    const token = client.credentials.access_token;
+    const url = `${baseUrl}=w${width}-h${height}`;
+    const response = await Axios({
+      method: "get",
+      url,
+      headers: { Authorization: "Bearer " + token },
+      responseType: "arraybuffer",
+      timeout: 60000,
+    });
+    return Buffer.from(response.data);
   }
 
   /**
