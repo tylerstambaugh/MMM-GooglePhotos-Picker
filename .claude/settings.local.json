@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C \"C:\\\\MagicMirror\\\\MagicMirror\\\\modules\\\\MMM-GooglePhotos\" rev-parse --show-toplevel)",
+      "Bash(node --run lint:js)",
+      "Bash(grep -v \"MMM-GooglePhotos\\\\\\\\\\\\\\\\GPhotos\")",
+      "Bash(node --check node_helper.js)",
+      "Bash(node --check PhotoCache.js)",
+      "Bash(node --check GPhotosPicker.js)",
+      "Bash(node --check MMM-GooglePhotos.js)"
+    ]
+  }
+}

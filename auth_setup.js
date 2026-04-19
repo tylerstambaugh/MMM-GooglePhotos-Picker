@@ -7,6 +7,9 @@ const SCOPES = ['https://www.googleapis.com/auth/photoslibrary.readonly'];
 const TOKEN_PATH = path.join(__dirname, 'token.json');
 const CREDENTIALS_PATH = path.join(__dirname, 'credentials.json');
 
+/**
+ *
+ */
 async function main() {
   try {
     const credentials = JSON.parse(fs.readFileSync(CREDENTIALS_PATH));
